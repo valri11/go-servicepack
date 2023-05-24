@@ -8,9 +8,9 @@ import (
 
 type ctxTracerKey struct{}
 
-func TracerFromContext(ctx context.Context) trace.Tracer {
-	t, _ := ctx.Value(ctxTracerKey{}).(trace.Tracer)
-	return t
+func TracerFromContext(ctx context.Context) (trace.Tracer, bool) {
+	t, ok := ctx.Value(ctxTracerKey{}).(trace.Tracer)
+	return t, ok
 }
 
 func NewContextWithTracer(parent context.Context, t trace.Tracer) context.Context {
