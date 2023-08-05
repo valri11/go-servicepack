@@ -10,7 +10,6 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/lestrrat-go/jwx/v2/jwa"
 	"github.com/lestrrat-go/jwx/v2/jwk"
 	"github.com/lestrrat-go/jwx/v2/jwt"
 )
@@ -19,8 +18,7 @@ type JwtAuther struct {
 	issuer   string
 	clientId string
 	jwksUrl  string
-	//signVerifyKey *rsa.PublicKey
-	verifyKey interface{}
+	keySet   jwk.Set
 }
 
 func NewJwtAuther(issuer string,
@@ -62,45 +60,11 @@ func NewJwtAuther(issuer string,
 		}
 	}
 
-	keyLoaded := false
-	var verifyKey interface{} // This is the raw key, like *rsa.PrivateKey or *ecdsa.PrivateKey
-	it := set.Keys(ctx)
-	for {
-		if !it.Next(ctx) {
-			break
-		}
-		pair := it.Pair()
-		key, ok := pair.Value.(jwk.Key)
-		if !ok {
-			continue
-		}
-
-		if key.KeyID() == issuer {
-
-			if err := key.Raw(&verifyKey); err != nil {
-				return nil, err
-			}
-			keyLoaded = true
-			break
-		}
-
-	}
-
-	if !keyLoaded {
-		return nil, fmt.Errorf("Unable to load signature verification key")
-	}
-
-	//	signVerifyKey, err := cryptotools.ParseRsaPublicKeyFromPemStr(signVerifyKeyPem)
-	//	if err != nil {
-	//		return nil, err
-	//	}
-
 	a := JwtAuther{
 		issuer:   issuer,
 		clientId: clientId,
 		jwksUrl:  jwksUrl,
-		//signVerifyKey: signVerifyKey,
-		verifyKey: verifyKey,
+		keySet:   set,
 	}
 
 	return &a, nil
@@ -135,7 +99,7 @@ func (a *JwtAuther) validateAuthToken(authToken string) (jwt.Token, error) {
 	tokenVer, err := jwt.Parse(
 		[]byte(authToken),
 		jwt.WithValidate(true),
-		jwt.WithKey(jwa.RS256, a.verifyKey),
+		jwt.WithKeySet(a.keySet),
 		jwt.WithIssuer(a.issuer),
 		jwt.WithAudience(a.clientId),
 	)
