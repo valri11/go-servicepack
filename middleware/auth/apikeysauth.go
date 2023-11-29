@@ -81,7 +81,8 @@ func (a *ApiKeyVerifier) AuthVerify(next http.Handler) http.Handler {
 					}
 				}
 				if ok {
-					ctx := context.WithValue(r.Context(), "AuthInfo", authInfo)
+					authData := NewUserInfo(authInfo.User)
+					ctx := context.WithValue(r.Context(), AuthUserContextKey, authData)
 					r = r.WithContext(ctx)
 				}
 			}
