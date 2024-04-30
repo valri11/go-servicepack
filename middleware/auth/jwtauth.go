@@ -76,7 +76,7 @@ func (a *JwtAuther) AuthVerify(next http.Handler) http.Handler {
 		if authToken != "" {
 			log.Printf("auth token: [%s]", authToken)
 			if authInfo, err := a.validateAuthToken(authToken); err == nil {
-				ctx := context.WithValue(r.Context(), AuthUserContextKey, authInfo)
+				ctx := context.WithValue(r.Context(), ctxAuthAccessTokenKey{}, authInfo)
 				r = r.WithContext(ctx)
 			} else {
 				log.Printf("ERR: %v\n", err)

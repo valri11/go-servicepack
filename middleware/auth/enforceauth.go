@@ -19,7 +19,7 @@ func NewEnforceAuther(enforceAuth bool) EnforceAuther {
 func (a *EnforceAuther) EnforceAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if a.enforceAuth {
-			if authInfo := r.Context().Value(AuthUserContextKey); authInfo == nil {
+			if authInfo := r.Context().Value(ctxAuthAccessTokenKey{}); authInfo == nil {
 				log.Printf("No auth info")
 				w.WriteHeader(http.StatusUnauthorized)
 				return

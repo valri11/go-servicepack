@@ -1,8 +1,6 @@
 package auth
 
-const (
-	AuthUserContextKey = "access_token"
-)
+type ctxAuthAccessTokenKey = struct{}
 
 type Claims map[string]any
 
