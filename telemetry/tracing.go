@@ -3,6 +3,7 @@ package telemetry
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -12,18 +13,21 @@ import (
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.20.0"
-	"google.golang.org/grpc"
 )
 
-// Initializes an OTLP exporter, and configures the corresponding trace and
-// metric providers.
+// InitProvider initializes an OTLP trace exporter and configures the trace provider.
+// When enableTracing is false, returns a no-op shutdown function.
 func InitProvider(ctx context.Context, enableTracing bool, serviceName string, otelEndpoint string) (func(context.Context) error, error) {
+	noopShutdown := func(context.Context) error { return nil }
+
+	if !enableTracing {
+		slog.Info("tracing disabled")
+		return noopShutdown, nil
+	}
 
 	traceClient := otlptracegrpc.NewClient(
 		otlptracegrpc.WithInsecure(),
 		otlptracegrpc.WithEndpoint(otelEndpoint),
-		otlptracegrpc.WithDialOption(grpc.WithBlock()),
-		otlptracegrpc.WithDialOption(grpc.WithTimeout(10*time.Second)),
 		otlptracegrpc.WithReconnectionPeriod(5*time.Second),
 	)
 	traceExporter, err := otlptrace.New(ctx, traceClient)
@@ -33,43 +37,37 @@ func InitProvider(ctx context.Context, enableTracing bool, serviceName string, o
 
 	res, err := resource.New(ctx,
 		resource.WithAttributes(
-			// the service name used to display traces in backends
 			semconv.ServiceName(serviceName),
 		),
 		resource.WithHost(),
-		//resource.WithFromEnv(),
-		//resource.WithTelemetrySDK(),
+		resource.WithFromEnv(),
+		resource.WithTelemetrySDK(),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create resource: %w", err)
 	}
 
-	// Register the trace exporter with a TracerProvider, using a batch
-	// span processor to aggregate spans before export.
-	bsp := sdktrace.NewBatchSpanProcessor(traceExporter)
-
 	tracerProvider := sdktrace.NewTracerProvider(
 		sdktrace.WithSampler(sdktrace.AlwaysSample()),
 		sdktrace.WithResource(res),
-		sdktrace.WithSpanProcessor(bsp),
+		sdktrace.WithBatcher(traceExporter),
 	)
 
-	if enableTracing {
-		otel.SetTracerProvider(tracerProvider)
-		// set global propagator to tracecontext (the default is no-op).
-		otel.SetTextMapPropagator(propagation.TraceContext{})
-	}
+	otel.SetTracerProvider(tracerProvider)
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
+		propagation.TraceContext{},
+		propagation.Baggage{},
+	))
 
-	done := func(ctx context.Context) error {
-		ctx, cancel := context.WithTimeout(ctx, time.Second)
+	shutdown := func(ctx context.Context) error {
+		shutdownCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
-		if err := traceExporter.Shutdown(ctx); err != nil {
-			otel.Handle(err)
+		if err := tracerProvider.Shutdown(shutdownCtx); err != nil {
+			slog.Error("failed to shutdown trace provider", "error", err)
 			return err
 		}
 		return nil
 	}
 
-	// Shutdown will flush any remaining spans and shut down the exporter.
-	return done, nil
+	return shutdown, nil
 }

@@ -1,7 +1,7 @@
 package auth
 
 import (
-	"log"
+	"log/slog"
 	"net/http"
 )
 
@@ -19,12 +19,10 @@ func NewEnforceAuther(enforceAuth bool) EnforceAuther {
 func (a *EnforceAuther) EnforceAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if a.enforceAuth {
-			if authInfo := r.Context().Value(ctxAuthAccessTokenKey{}); authInfo == nil {
-				log.Printf("No auth info")
+			if _, ok := AuthFromContext(r.Context()); !ok {
+				slog.Warn("enforce auth: no auth info in context", "path", r.URL.Path)
 				w.WriteHeader(http.StatusUnauthorized)
 				return
-			} else {
-				log.Printf("Auth info: %v", authInfo)
 			}
 		}
 

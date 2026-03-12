@@ -1,9 +1,8 @@
 package auth
 
 import (
-	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -18,12 +17,6 @@ type ApiKey struct {
 	Domain string
 }
 
-type AuthInfo struct {
-	User     string
-	ClientId string
-	Domain   string
-}
-
 type ApiKeyVerifier struct {
 	apiKeys map[string]AuthInfo
 }
@@ -31,13 +24,13 @@ type ApiKeyVerifier struct {
 func NewApiKeyVerifier(apiKeysFile string) (*ApiKeyVerifier, error) {
 	apiKeysData, err := os.ReadFile(apiKeysFile)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to read API keys file %q: %w", apiKeysFile, err)
 	}
 
 	var apiKeys []ApiKey
 	err = yaml.Unmarshal(apiKeysData, &apiKeys)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to parse API keys file %q: %w", apiKeysFile, err)
 	}
 
 	apiKeysMap := make(map[string]AuthInfo)
@@ -60,7 +53,7 @@ func (a *ApiKeyVerifier) AuthVerify(next http.Handler) http.Handler {
 		authToken := getApiKeyAuthHeader(r.Header.Get("X-Authorization"))
 		if authToken != "" {
 			origin := r.Header.Get("Origin")
-			log.Printf("auth token: [%s], origin: %s", authToken, origin)
+			slog.Debug("apikey auth: validating", "origin", origin)
 			authInfo, ok := a.apiKeys[authToken]
 			if ok {
 				checkDomain := authInfo.Domain
@@ -69,7 +62,6 @@ func (a *ApiKeyVerifier) AuthVerify(next http.Handler) http.Handler {
 					if err != nil {
 						ok = false
 					} else {
-						log.Printf("Remote host: %s", remoteHost)
 						if checkDomain == "localhost" {
 							ok = (remoteHost == "127.0.0.1" || remoteHost == "::1")
 						} else {
@@ -77,21 +69,20 @@ func (a *ApiKeyVerifier) AuthVerify(next http.Handler) http.Handler {
 						}
 					}
 					if !ok {
-						log.Printf("ApiKey verifier. Domain mismatch: %s != %s", checkDomain, r.RemoteAddr)
+						slog.Warn("apikey auth: domain mismatch", "expected", checkDomain, "remote", r.RemoteAddr)
 					}
 				}
 				if ok {
 					authData := NewUserInfo(authInfo.User)
-					ctx := context.WithValue(r.Context(), ctxAuthAccessTokenKey{}, authData)
+					ctx := NewContextWithAuth(r.Context(), authData)
 					r = r.WithContext(ctx)
 				}
 			}
 
 			if !ok {
-				err := fmt.Errorf("Not authorized")
-				log.Printf("ERR: %v\n", err)
+				slog.Warn("apikey auth: not authorized", "remote", r.RemoteAddr)
 				w.WriteHeader(http.StatusUnauthorized)
-				w.Write([]byte(fmt.Sprintf("ERR: %v\n", err)))
+				w.Write([]byte("ERR: not authorized\n"))
 				return
 			}
 		}

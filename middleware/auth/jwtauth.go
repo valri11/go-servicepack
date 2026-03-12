@@ -4,10 +4,9 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 
 	"github.com/lestrrat-go/jwx/v2/jwk"
@@ -31,17 +30,16 @@ func NewJwtAuther(issuer string,
 
 	var set jwk.Set
 	if jwksUrlCert != "" {
-		log.Println("updating trust CA")
+		slog.Debug("jwt auth: updating trust CA")
 		rootCAs, err := x509.SystemCertPool()
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to load system cert pool: %w", err)
 		}
 		if ok := rootCAs.AppendCertsFromPEM([]byte(jwksUrlCert)); !ok {
-			return nil, fmt.Errorf("Unable to add cert to trust CA")
+			return nil, fmt.Errorf("unable to add cert to trust CA")
 		}
 
 		config := &tls.Config{
-			//InsecureSkipVerify: *insecure,
 			RootCAs: rootCAs,
 		}
 		tr := &http.Transport{TLSClientConfig: config}
@@ -49,14 +47,13 @@ func NewJwtAuther(issuer string,
 
 		set, err = jwk.Fetch(ctx, jwksUrl, jwk.WithHTTPClient(client))
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to fetch JWKS with custom CA: %w", err)
 		}
 	} else {
-		// Use jwk.Cache if you intend to keep reuse the JWKS over and over
 		var err error
 		set, err = jwk.Fetch(ctx, jwksUrl)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to fetch JWKS: %w", err)
 		}
 	}
 
@@ -74,12 +71,12 @@ func (a *JwtAuther) AuthVerify(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authToken := getBearerAuthHeader(r.Header.Get("Authorization"))
 		if authToken != "" {
-			log.Printf("auth token: [%s]", authToken)
-			if authInfo, err := a.validateAuthToken(authToken); err == nil {
-				ctx := context.WithValue(r.Context(), ctxAuthAccessTokenKey{}, authInfo)
+			slog.Debug("jwt auth: validating bearer token")
+			if token, err := a.validateAuthToken(authToken); err == nil {
+				ctx := NewContextWithAuth(r.Context(), token)
 				r = r.WithContext(ctx)
 			} else {
-				log.Printf("ERR: %v\n", err)
+				slog.Warn("jwt auth: token validation failed", "error", err)
 				w.WriteHeader(http.StatusUnauthorized)
 				w.Write([]byte(fmt.Sprintf("ERR: %v\n", err)))
 				return
@@ -92,10 +89,9 @@ func (a *JwtAuther) AuthVerify(next http.Handler) http.Handler {
 
 func (a *JwtAuther) validateAuthToken(authToken string) (jwt.Token, error) {
 	if authToken == "" {
-		return nil, errors.New("Empty auth token")
+		return nil, errors.New("empty auth token")
 	}
 
-	// Validate using public key
 	tokenVer, err := jwt.Parse(
 		[]byte(authToken),
 		jwt.WithValidate(true),
@@ -107,11 +103,10 @@ func (a *JwtAuther) validateAuthToken(authToken string) (jwt.Token, error) {
 		return nil, err
 	}
 
-	buf, err := json.MarshalIndent(tokenVer, "", "  ")
-	if err != nil {
-		return nil, err
-	}
-	log.Printf("%s\n", buf)
+	slog.Debug("jwt auth: token validated",
+		"issuer", tokenVer.Issuer(),
+		"subject", tokenVer.Subject(),
+	)
 
 	return tokenVer, nil
 }

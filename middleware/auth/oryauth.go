@@ -1,25 +1,31 @@
 package auth
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
+
+const introspectTimeout = 10 * time.Second
 
 type Auther struct {
 	introspectUrl string
 	clientID      string
+	httpClient    *http.Client
 }
 
 func NewAuther(introspectUrl string, clientID string) *Auther {
 	a := Auther{
 		introspectUrl: introspectUrl,
 		clientID:      clientID,
+		httpClient: &http.Client{
+			Timeout: introspectTimeout,
+		},
 	}
 	return &a
 }
@@ -28,12 +34,12 @@ func (a *Auther) AuthVerify(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authToken := getBearerAuthHeader(r.Header.Get("Authorization"))
 		if authToken != "" {
-			log.Printf("auth token: [%s]", authToken)
+			slog.Debug("ory auth: validating bearer token")
 			if authInfo, err := a.validateAuthToken(authToken); err == nil {
-				ctx := context.WithValue(r.Context(), "AuthInfo", authInfo)
+				ctx := NewContextWithAuth(r.Context(), authInfo)
 				r = r.WithContext(ctx)
 			} else {
-				log.Printf("ERR: %v\n", err)
+				slog.Warn("ory auth: token validation failed", "error", err)
 				w.WriteHeader(http.StatusUnauthorized)
 				w.Write([]byte(fmt.Sprintf("ERR: %v\n", err)))
 				return
@@ -48,41 +54,41 @@ func (a *Auther) validateAuthToken(authToken string) (AuthInfo, error) {
 	var authInfo AuthInfo
 
 	if authToken == "" {
-		return authInfo, errors.New("Empty auth token")
+		return authInfo, errors.New("empty auth token")
 	}
 
 	data := url.Values{
 		"token": {authToken},
 	}
 
-	resp, err := http.PostForm(a.introspectUrl, data)
+	resp, err := a.httpClient.PostForm(a.introspectUrl, data)
 	if err != nil {
-		return authInfo, err
+		return authInfo, fmt.Errorf("introspect request failed: %w", err)
 	}
+	defer resp.Body.Close()
 
 	var tokenInfo map[string]interface{}
 
 	err = json.NewDecoder(resp.Body).Decode(&tokenInfo)
 	if err != nil {
-		return authInfo, err
+		return authInfo, fmt.Errorf("failed to decode introspect response: %w", err)
 	}
-	log.Print(tokenInfo)
 
 	isActive, ok := tokenInfo["active"]
 	if !ok {
-		return authInfo, errors.New("Invalid auth token")
+		return authInfo, errors.New("invalid auth token: missing 'active' field")
 	}
 	active, ok := isActive.(bool)
 	if !ok {
-		return authInfo, errors.New("Invalid auth token")
+		return authInfo, errors.New("invalid auth token: 'active' is not boolean")
 	}
 	if !active {
-		return authInfo, errors.New("Expired auth token")
+		return authInfo, errors.New("expired auth token")
 	}
 
 	// validate token subject
 	if tokenInfo["sub"] != a.clientID {
-		return authInfo, errors.New("Invalid token")
+		return authInfo, errors.New("invalid token: subject mismatch")
 	}
 
 	userName, ok := tokenInfo["username"].(string)
@@ -98,8 +104,7 @@ func (a *Auther) validateAuthToken(authToken string) (AuthInfo, error) {
 	return authInfo, nil
 }
 
-// BearerAuthHeader validates incoming `r.Header.Get("Authorization")` header
-// and returns token otherwise an empty string.
+// getBearerAuthHeader extracts the token from "Bearer <token>" header value.
 func getBearerAuthHeader(authHeader string) string {
 	if authHeader == "" {
 		return ""
