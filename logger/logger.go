@@ -1,3 +1,5 @@
+// Deprecated: Use log/slog instead. This package is kept for backward compatibility.
+// New code should use telemetry.InitProviders which configures slog with JSON + OTEL fanout.
 package logger
 
 import (
