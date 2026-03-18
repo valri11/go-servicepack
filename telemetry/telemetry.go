@@ -47,8 +47,12 @@ func InitProviders(ctx context.Context,
 			otelEndpoint = "localhost:4317"
 		}
 	}
+	// gRPC WithEndpoint expects bare host:port, strip URL scheme if present
+	grpcEndpoint := strings.TrimPrefix(strings.TrimPrefix(otelEndpoint, "http://"), "https://")
+
 	slog.Debug("init OTEL providers",
 		"endpoint", otelEndpoint,
+		"grpcEndpoint", grpcEndpoint,
 		"service", serviceName,
 		"disableTelemetry", disableTelemetry,
 	)
@@ -105,7 +109,7 @@ func InitProviders(ctx context.Context,
 	if slices.Contains(envTraceExporters, "") || slices.Contains(envTraceExporters, "otlp") {
 		traceClient := otlptracegrpc.NewClient(
 			otlptracegrpc.WithInsecure(),
-			otlptracegrpc.WithEndpoint(otelEndpoint),
+			otlptracegrpc.WithEndpoint(grpcEndpoint),
 		)
 		traceExporter, err := otlptrace.New(ctx, traceClient)
 		if err != nil {
@@ -140,7 +144,7 @@ func InitProviders(ctx context.Context,
 	if slices.Contains(envLogsExporters, "") || slices.Contains(envLogsExporters, "otlp") {
 		logExporterGrpc, err := otlploggrpc.New(ctx,
 			otlploggrpc.WithInsecure(),
-			otlploggrpc.WithEndpoint(otelEndpoint),
+			otlploggrpc.WithEndpoint(grpcEndpoint),
 		)
 		if err != nil {
 			err = handleErr(err)
@@ -192,7 +196,7 @@ func InitProviders(ctx context.Context,
 	if slices.Contains(envMetricExporters, "") || slices.Contains(envMetricExporters, "otlp") {
 		metricExporter, err := otlpmetricgrpc.New(ctx,
 			otlpmetricgrpc.WithInsecure(),
-			otlpmetricgrpc.WithEndpoint(otelEndpoint),
+			otlpmetricgrpc.WithEndpoint(grpcEndpoint),
 		)
 		if err != nil {
 			err = handleErr(err)
