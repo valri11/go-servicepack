@@ -11,6 +11,8 @@ import (
 
 	"github.com/lestrrat-go/jwx/v2/jwk"
 	"github.com/lestrrat-go/jwx/v2/jwt"
+
+	"github.com/valri11/go-servicepack/problem"
 )
 
 type JwtAuther struct {
@@ -76,9 +78,13 @@ func (a *JwtAuther) AuthVerify(next http.Handler) http.Handler {
 				ctx := NewContextWithAuth(r.Context(), token)
 				r = r.WithContext(ctx)
 			} else {
-				slog.Warn("jwt auth: token validation failed", "error", err)
-				w.WriteHeader(http.StatusUnauthorized)
-				w.Write([]byte(fmt.Sprintf("ERR: %v\n", err)))
+				// Validation errors name keys, issuers and clock skew, so they
+				// stay in the log as the cause.
+				problem.Write(r.Context(), w,
+					problem.Unauthorized("The provided bearer token is not valid.").
+						WithType(problem.TypeInvalidToken).
+						WithInstance(r.URL.Path).
+						WithCause(err))
 				return
 			}
 		}

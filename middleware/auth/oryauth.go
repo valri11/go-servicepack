@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/valri11/go-servicepack/problem"
 )
 
 const introspectTimeout = 10 * time.Second
@@ -39,9 +41,13 @@ func (a *Auther) AuthVerify(next http.Handler) http.Handler {
 				ctx := NewContextWithAuth(r.Context(), authInfo)
 				r = r.WithContext(ctx)
 			} else {
-				slog.Warn("ory auth: token validation failed", "error", err)
-				w.WriteHeader(http.StatusUnauthorized)
-				w.Write([]byte(fmt.Sprintf("ERR: %v\n", err)))
+				// Introspection errors name the endpoint and token subject, so
+				// they stay in the log as the cause.
+				problem.Write(r.Context(), w,
+					problem.Unauthorized("The provided bearer token is not valid.").
+						WithType(problem.TypeInvalidToken).
+						WithInstance(r.URL.Path).
+						WithCause(err))
 				return
 			}
 		}

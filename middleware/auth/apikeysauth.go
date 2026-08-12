@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v2"
+
+	"github.com/valri11/go-servicepack/problem"
 )
 
 type ApiKey struct {
@@ -80,9 +82,11 @@ func (a *ApiKeyVerifier) AuthVerify(next http.Handler) http.Handler {
 			}
 
 			if !ok {
-				slog.Warn("apikey auth: not authorized", "remote", r.RemoteAddr)
-				w.WriteHeader(http.StatusUnauthorized)
-				w.Write([]byte("ERR: not authorized\n"))
+				problem.Write(r.Context(), w,
+					problem.Unauthorized("The provided API key is not valid.").
+						WithType(problem.TypeInvalidAPIKey).
+						WithInstance(r.URL.Path).
+						WithCause(fmt.Errorf("apikey auth: not authorized for remote %s", r.RemoteAddr)))
 				return
 			}
 		}

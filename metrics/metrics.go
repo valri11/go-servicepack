@@ -7,6 +7,8 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 	metricsApi "go.opentelemetry.io/otel/metric"
+
+	"github.com/valri11/go-servicepack/problem"
 )
 
 type AppMetrics struct {
@@ -80,8 +82,12 @@ func (w *CustomResponseWriter) Done() {
 func WithMetrics(metrics *AppMetrics) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ctx := r.Context()
 			requestStartTime := time.Now()
+
+			// Lets problem.Write report the problem type back here, so errors
+			// break down by cause and not just by status code.
+			ctx, problemRec := problem.ContextWithRecorder(r.Context())
+			r = r.WithContext(ctx)
 
 			attrs := metricsApi.WithAttributes(
 				attribute.String("method", r.Method),
@@ -94,10 +100,16 @@ func WithMetrics(metrics *AppMetrics) func(http.Handler) http.Handler {
 			ew.Done()
 
 			if ew.StatusCode >= http.StatusBadRequest {
+				problemType := problemRec.Type()
+				if problemType == "" {
+					// Did not go through problem.Write.
+					problemType = "unclassified"
+				}
 				errAttrs := metricsApi.WithAttributes(
 					attribute.String("method", r.Method),
 					attribute.String("path", r.URL.Path),
 					attribute.String("status", strconv.Itoa(ew.StatusCode)),
+					attribute.String("problem_type", problemType),
 				)
 				metrics.ReqErrCounter.Add(ctx, 1, errAttrs)
 			}
