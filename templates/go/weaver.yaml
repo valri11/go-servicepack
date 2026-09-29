@@ -10,11 +10,14 @@ text_maps:
     double: float64
     boolean: bool
 
+params:
+  package: semconv
+
 whitespace_control:
   trim_blocks: true
   lstrip_blocks: true
 
-acronyms: ["HTTP", "URL", "ID", "API"]
+acronyms: ["HTTP", "URL", "ID", "API", "OK"]
 
 comment_formats:
   go:

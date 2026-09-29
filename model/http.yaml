@@ -17,17 +17,6 @@ metrics:
       - ref: problem.type
         requirement_level: required
 
-attribute_groups:
-  # Attributes otelhttp sets whose upstream definitions are not in an importable group.
-  - id: servicepack.http.server.connection
-    visibility: public
-    stability: development
-    brief: Server and client connection attributes on HTTP SERVER spans and metrics.
-    attributes:
-      - ref: server.address
-      - ref: server.port
-      - ref: client.address
-
 span_refinements:
   - id: servicepack.http.server
     ref: http.server

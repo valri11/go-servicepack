@@ -1,0 +1,89 @@
+version: "3"
+
+vars:
+  WEAVER_VERSION: v0.26.1
+  WEAVER: ./bin/weaver
+  WEAVER_PACKAGES: https://github.com/open-telemetry/opentelemetry-weaver-packages.git@cd596eae86e732158bc89c4f4c47d07a97e9ab34
+
+tasks:
+  fmt:
+    desc: Format Go source files
+    cmds:
+      - gofumpt -w .
+
+  lint:
+    desc: Run golangci-lint
+    cmds:
+      - golangci-lint run ./...
+
+  vet:
+    desc: Run go vet
+    cmds:
+      - go vet ./...
+
+  test:
+    desc: Run tests
+    cmds:
+      - go test -race ./...
+
+  tidy:
+    desc: Run go mod tidy
+    cmds:
+      - go mod tidy
+
+  check:
+    desc: Run fmt, vet, lint, test and the telemetry registry check
+    cmds:
+      - task: fmt
+      - task: vet
+      - task: lint
+      - task: test
+      - task: semconv:check
+
+  tools:weaver:
+    desc: Install weaver into ./bin
+    vars:
+      TARGET:
+        sh: |
+          case "$(uname -s)-$(uname -m)" in
+            Darwin-arm64) echo aarch64-apple-darwin ;;
+            Darwin-x86_64) echo x86_64-apple-darwin ;;
+            Linux-aarch64|Linux-arm64) echo aarch64-unknown-linux-gnu ;;
+            *) echo x86_64-unknown-linux-gnu ;;
+          esac
+      URL: https://github.com/open-telemetry/weaver/releases/download/{{.WEAVER_VERSION}}/weaver-{{.TARGET}}.tar.xz
+    status:
+      - '{{.WEAVER}} --version | grep -q "{{trimPrefix "v" .WEAVER_VERSION}}"'
+    cmds:
+      - mkdir -p bin
+      - curl -fsSL -o bin/weaver.tar.xz {{.URL}}
+      - curl -fsSL -o bin/weaver.tar.xz.sha256 {{.URL}}.sha256
+      - echo "$(cut -d' ' -f1 bin/weaver.tar.xz.sha256)  bin/weaver.tar.xz" | (command -v sha256sum >/dev/null && sha256sum -c - || shasum -a 256 -c -)
+      - tar -xJf bin/weaver.tar.xz -C bin --strip-components=1 weaver-{{.TARGET}}/weaver
+      - rm -f bin/weaver.tar.xz bin/weaver.tar.xz.sha256
+
+  semconv:check:
+    desc: Validate the telemetry registry (model/) against OTel naming policies
+    deps: [tools:weaver]
+    cmds:
+      - "{{.WEAVER}} registry check"
+
+  semconv:generate:
+    desc: Generate semconv/ Go constants and docs/telemetry from model/
+    deps: [tools:weaver]
+    cmds:
+      - "{{.WEAVER}} registry generate -t templates go semconv"
+      - gofmt -w semconv
+      - rm -rf docs/telemetry
+      - >-
+        {{.WEAVER}} registry generate
+        -t '{{.WEAVER_PACKAGES}}[templates/docs]'
+        --param registry_base_url=/docs/telemetry
+        markdown docs/telemetry
+
+  semconv:verify:
+    desc: Fail if generated files are out of date with model/
+    cmds:
+      - task: semconv:generate
+      - git status --porcelain -- semconv docs/telemetry
+      - test -z "$(git status --porcelain -- semconv docs/telemetry)"

@@ -1,15 +1,22 @@
-file_format: definition/2
-attributes:
-  - key: problem.type
-    type: string
-    stability: development
-    brief: RFC 9457 problem type URI of an error response.
-    note: "`unclassified` when the error response did not go through `problem.Write`."
-    examples:
-      - "https://problems.valri11.dev/validation-error"
-      - "about:blank"
-  - key: problem.status
-    type: int
-    stability: development
-    brief: HTTP status code carried by the problem details.
-    examples: [400, 500]
+# V1 attribute registry group: registries depending on this one import it with
+# `attribute_groups: [registry.problem]`. V2 attribute definitions cannot be
+# imported yet.
+groups:
+  - id: registry.problem
+    type: attribute_group
+    display_name: Problem Details Attributes
+    brief: RFC 9457 problem details of an error response.
+    attributes:
+      - id: problem.type
+        type: string
+        stability: development
+        brief: RFC 9457 problem type URI of an error response.
+        note: "`unclassified` when the error response did not go through `problem.Write`."
+        examples:
+          - "https://problems.valri11.dev/validation-error"
+          - "about:blank"
+      - id: problem.status
+        type: int
+        stability: development
+        brief: HTTP status code carried by the problem details.
+        examples: [400, 500]

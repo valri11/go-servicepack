@@ -73,12 +73,12 @@ func observe(ctx context.Context, p *Problem) {
 	}
 
 	logAttrs := []any{
-		"status", p.Status,
-		"problem_type", p.Type,
-		"detail", p.Detail,
+		string(semconv.ProblemStatusKey), p.Status,
+		string(semconv.ProblemTypeKey), p.Type,
+		"problem_detail", p.Detail,
 	}
 	if p.Instance != "" {
-		logAttrs = append(logAttrs, "instance", p.Instance)
+		logAttrs = append(logAttrs, "problem_instance", p.Instance)
 	}
 	if p.cause != nil {
 		logAttrs = append(logAttrs, "error", p.cause)

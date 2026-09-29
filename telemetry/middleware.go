@@ -1,13 +1,16 @@
 package telemetry
 
 import (
+	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/felixge/httpsnoop"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	semconv "go.opentelemetry.io/otel/semconv/v1.40.0"
 )
 
 // HTTPMiddleware wraps a route with otelhttp. Install it per route (the mux
@@ -49,14 +52,22 @@ func WithRequestLog() func(http.Handler) http.Handler {
 
 			slog.DebugContext(ctx,
 				"request",
-				"method", r.Method,
-				"path", r.URL.Path,
-				"route", Route(r),
-				"status", m.Code,
-				"proto", r.Proto,
-				"remoteAddr", r.RemoteAddr,
-				"latency_us", float64(m.Duration)/float64(time.Microsecond),
+				string(semconv.HTTPRequestMethodKey), r.Method,
+				string(semconv.URLPathKey), r.URL.Path,
+				string(semconv.HTTPRouteKey), Route(r),
+				string(semconv.HTTPResponseStatusCodeKey), m.Code,
+				string(semconv.NetworkProtocolVersionKey), fmt.Sprintf("%d.%d", r.ProtoMajor, r.ProtoMinor),
+				string(semconv.ClientAddressKey), clientAddress(r),
+				"duration_ms", float64(m.Duration)/float64(time.Millisecond),
 			)
 		})
 	}
+}
+
+func clientAddress(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }

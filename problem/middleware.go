@@ -8,6 +8,7 @@ import (
 	"runtime/debug"
 
 	"github.com/felixge/httpsnoop"
+	otelsemconv "go.opentelemetry.io/otel/semconv/v1.40.0"
 )
 
 // Recoverer turns a panic into a 500 problem+json. The panic value and stack
@@ -65,9 +66,9 @@ func Recoverer(next http.Handler) http.Handler {
 			ctx := r.Context()
 			slog.ErrorContext(ctx, "panic recovered",
 				"error", err,
-				"method", r.Method,
-				"path", r.URL.Path,
-				"stack", string(debug.Stack()),
+				string(otelsemconv.HTTPRequestMethodKey), r.Method,
+				string(otelsemconv.URLPathKey), r.URL.Path,
+				string(otelsemconv.ExceptionStacktraceKey), string(debug.Stack()),
 			)
 
 			p := Internal(err).

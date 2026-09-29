@@ -15,7 +15,18 @@ in a namespace are also available on the namespace page.
 
 Currently, the following namespaces exist:
 
+- [Deployment](/docs/telemetry/deployment/README.md)
+- [Error](/docs/telemetry/error/README.md)
+- [Exception](/docs/telemetry/exception/README.md)
 - [Go](/docs/telemetry/go/README.md)
+- [Host](/docs/telemetry/host/README.md)
 - [HTTP](/docs/telemetry/http/README.md)
+- [Network](/docs/telemetry/network/README.md)
+- [Os](/docs/telemetry/os/README.md)
 - [Problem](/docs/telemetry/problem/README.md)
+- [Process](/docs/telemetry/process/README.md)
+- [Service](/docs/telemetry/service/README.md)
 - [Servicepack](/docs/telemetry/servicepack/README.md)
+- [Telemetry](/docs/telemetry/telemetry/README.md)
+- [URL](/docs/telemetry/url/README.md)
+- [User Agent](/docs/telemetry/user-agent/README.md)
