@@ -2,120 +2,75 @@ package metrics
 
 import (
 	"net/http"
-	"strconv"
-	"time"
 
+	"github.com/felixge/httpsnoop"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel/attribute"
 	metricsApi "go.opentelemetry.io/otel/metric"
 
 	"github.com/valri11/go-servicepack/problem"
+	"github.com/valri11/go-servicepack/telemetry"
 )
 
 type AppMetrics struct {
-	ReqCounter    metricsApi.Int64Counter
-	ReqDuration   metricsApi.Float64Histogram
 	ReqErrCounter metricsApi.Int64Counter
 }
 
 func NewAppMetrics(meter metricsApi.Meter) (*AppMetrics, error) {
-	reqCounter, err := meter.Int64Counter("req_cnt", metricsApi.WithDescription("request counter"))
-	if err != nil {
-		return nil, err
-	}
-	reqDuration, err := meter.Float64Histogram(
-		"req_duration",
-		metricsApi.WithDescription("Requests handler end to end duration"),
-		metricsApi.WithUnit("ms"),
-	)
-	if err != nil {
-		return nil, err
-	}
 	errCounter, err := meter.Int64Counter("err_cnt", metricsApi.WithDescription("service error counter"))
 	if err != nil {
 		return nil, err
 	}
-
-	m := AppMetrics{
-		ReqCounter:    reqCounter,
-		ReqDuration:   reqDuration,
-		ReqErrCounter: errCounter,
-	}
-	return &m, nil
+	return &AppMetrics{ReqErrCounter: errCounter}, nil
 }
 
-type CustomResponseWriter struct {
-	responseWriter http.ResponseWriter
-	StatusCode     int
-}
+const unmatchedRoute = "unmatched"
 
-func ExtendResponseWriter(w http.ResponseWriter) *CustomResponseWriter {
-	return &CustomResponseWriter{w, 0}
-}
-
-func (w *CustomResponseWriter) Write(b []byte) (int, error) {
-	return w.responseWriter.Write(b)
-}
-
-func (w *CustomResponseWriter) Header() http.Header {
-	return w.responseWriter.Header()
-}
-
-func (w *CustomResponseWriter) WriteHeader(statusCode int) {
-	w.StatusCode = statusCode
-	w.responseWriter.WriteHeader(statusCode)
-}
-
-// Flush implements http.Flusher for SSE and streaming responses.
-func (w *CustomResponseWriter) Flush() {
-	if f, ok := w.responseWriter.(http.Flusher); ok {
-		f.Flush()
-	}
-}
-
-func (w *CustomResponseWriter) Done() {
-	// if WriteHeader wasn't called, default to 200 OK
-	if w.StatusCode == 0 {
-		w.StatusCode = http.StatusOK
-	}
-}
-
+// WithMetrics must run per route, inside telemetry.HTTPMiddleware.
 func WithMetrics(metrics *AppMetrics) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			requestStartTime := time.Now()
-
 			// Lets problem.Write report the problem type back here, so errors
 			// break down by cause and not just by status code.
 			ctx, problemRec := problem.ContextWithRecorder(r.Context())
 			r = r.WithContext(ctx)
 
-			attrs := metricsApi.WithAttributes(
-				attribute.String("method", r.Method),
-				attribute.String("path", r.URL.Path),
-			)
-			metrics.ReqCounter.Add(ctx, 1, attrs)
-
-			ew := ExtendResponseWriter(w)
-			next.ServeHTTP(ew, r)
-			ew.Done()
-
-			if ew.StatusCode >= http.StatusBadRequest {
-				problemType := problemRec.Type()
-				if problemType == "" {
-					// Did not go through problem.Write.
-					problemType = "unclassified"
-				}
-				errAttrs := metricsApi.WithAttributes(
-					attribute.String("method", r.Method),
-					attribute.String("path", r.URL.Path),
-					attribute.String("status", strconv.Itoa(ew.StatusCode)),
-					attribute.String("problem_type", problemType),
-				)
-				metrics.ReqErrCounter.Add(ctx, 1, errAttrs)
+			m := httpsnoop.CaptureMetrics(next, w, r)
+			if m.Code < http.StatusBadRequest {
+				return
 			}
 
-			elapsedTime := float64(time.Since(requestStartTime)) / float64(time.Millisecond)
-			metrics.ReqDuration.Record(ctx, elapsedTime, attrs)
+			problemType := problemRec.Type()
+			if problemType == "" {
+				// Did not go through problem.Write.
+				problemType = "unclassified"
+			}
+			problemAttr := attribute.String("problem.type", problemType)
+
+			if labeler, ok := otelhttp.LabelerFromContext(ctx); ok {
+				labeler.Add(problemAttr)
+			}
+
+			route := telemetry.Route(r)
+			if route == "" {
+				route = unmatchedRoute
+			}
+			metrics.ReqErrCounter.Add(ctx, 1, metricsApi.WithAttributes(
+				attribute.String("http.request.method", normalizeMethod(r.Method)),
+				attribute.String("http.route", route),
+				attribute.Int("http.response.status_code", m.Code),
+				problemAttr,
+			))
 		})
 	}
+}
+
+func normalizeMethod(method string) string {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut,
+		http.MethodPatch, http.MethodDelete, http.MethodConnect,
+		http.MethodOptions, http.MethodTrace:
+		return method
+	}
+	return "_OTHER"
 }

@@ -6,9 +6,8 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"strings"
 
-	"gopkg.in/yaml.v2"
+	"go.yaml.in/yaml/v3"
 
 	"github.com/valri11/go-servicepack/problem"
 )
@@ -55,7 +54,7 @@ func (a *ApiKeyVerifier) AuthVerify(next http.Handler) http.Handler {
 		authToken := getApiKeyAuthHeader(r.Header.Get("X-Authorization"))
 		if authToken != "" {
 			origin := r.Header.Get("Origin")
-			slog.Debug("apikey auth: validating", "origin", origin)
+			slog.DebugContext(r.Context(), "apikey auth: validating", "origin", origin)
 			authInfo, ok := a.apiKeys[authToken]
 			if ok {
 				checkDomain := authInfo.Domain
@@ -71,7 +70,7 @@ func (a *ApiKeyVerifier) AuthVerify(next http.Handler) http.Handler {
 						}
 					}
 					if !ok {
-						slog.Warn("apikey auth: domain mismatch", "expected", checkDomain, "remote", r.RemoteAddr)
+						slog.WarnContext(r.Context(), "apikey auth: domain mismatch", "expected", checkDomain, "remote", r.RemoteAddr)
 					}
 				}
 				if ok {
@@ -96,19 +95,5 @@ func (a *ApiKeyVerifier) AuthVerify(next http.Handler) http.Handler {
 }
 
 func getApiKeyAuthHeader(authHeader string) string {
-	if authHeader == "" {
-		return ""
-	}
-
-	parts := strings.Split(authHeader, "Apikey")
-	if len(parts) != 2 {
-		return ""
-	}
-
-	token := strings.TrimSpace(parts[1])
-	if len(token) < 1 {
-		return ""
-	}
-
-	return token
+	return authCredentials(authHeader, "Apikey")
 }

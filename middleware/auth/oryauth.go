@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +10,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
 	"github.com/valri11/go-servicepack/problem"
 )
@@ -26,7 +29,8 @@ func NewAuther(introspectUrl string, clientID string) *Auther {
 		introspectUrl: introspectUrl,
 		clientID:      clientID,
 		httpClient: &http.Client{
-			Timeout: introspectTimeout,
+			Timeout:   introspectTimeout,
+			Transport: otelhttp.NewTransport(http.DefaultTransport),
 		},
 	}
 	return &a
@@ -36,8 +40,8 @@ func (a *Auther) AuthVerify(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authToken := getBearerAuthHeader(r.Header.Get("Authorization"))
 		if authToken != "" {
-			slog.Debug("ory auth: validating bearer token")
-			if authInfo, err := a.validateAuthToken(authToken); err == nil {
+			slog.DebugContext(r.Context(), "ory auth: validating bearer token")
+			if authInfo, err := a.validateAuthToken(r.Context(), authToken); err == nil {
 				ctx := NewContextWithAuth(r.Context(), authInfo)
 				r = r.WithContext(ctx)
 			} else {
@@ -56,7 +60,7 @@ func (a *Auther) AuthVerify(next http.Handler) http.Handler {
 	})
 }
 
-func (a *Auther) validateAuthToken(authToken string) (AuthInfo, error) {
+func (a *Auther) validateAuthToken(ctx context.Context, authToken string) (AuthInfo, error) {
 	var authInfo AuthInfo
 
 	if authToken == "" {
@@ -67,11 +71,21 @@ func (a *Auther) validateAuthToken(authToken string) (AuthInfo, error) {
 		"token": {authToken},
 	}
 
-	resp, err := a.httpClient.PostForm(a.introspectUrl, data)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.introspectUrl, strings.NewReader(data.Encode()))
+	if err != nil {
+		return authInfo, fmt.Errorf("introspect request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := a.httpClient.Do(req)
 	if err != nil {
 		return authInfo, fmt.Errorf("introspect request failed: %w", err)
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return authInfo, fmt.Errorf("introspect request failed: status %d", resp.StatusCode)
+	}
 
 	var tokenInfo map[string]interface{}
 
@@ -112,19 +126,5 @@ func (a *Auther) validateAuthToken(authToken string) (AuthInfo, error) {
 
 // getBearerAuthHeader extracts the token from "Bearer <token>" header value.
 func getBearerAuthHeader(authHeader string) string {
-	if authHeader == "" {
-		return ""
-	}
-
-	parts := strings.Split(authHeader, "Bearer")
-	if len(parts) != 2 {
-		return ""
-	}
-
-	token := strings.TrimSpace(parts[1])
-	if len(token) < 1 {
-		return ""
-	}
-
-	return token
+	return authCredentials(authHeader, "Bearer")
 }

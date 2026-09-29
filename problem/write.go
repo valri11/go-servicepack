@@ -30,11 +30,37 @@ func Write(ctx context.Context, w http.ResponseWriter, p *Problem) {
 		p.With(ExtTraceID, sc.TraceID().String())
 	}
 
+	observe(ctx, p)
+
+	body, err := json.Marshal(p)
+	if err != nil {
+		slog.ErrorContext(ctx, "problem: failed to marshal problem details", "error", err)
+		body = []byte(fallbackBody)
+		p.Status = http.StatusInternalServerError
+	}
+
+	header := w.Header()
+	for k, v := range p.headers {
+		header.Set(k, v)
+	}
+	header.Set("Content-Type", MediaType)
+	header.Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(p.Status)
+
+	if _, err := w.Write(body); err != nil {
+		slog.WarnContext(ctx, "problem: failed to write response", "error", err)
+	}
+}
+
+func observe(ctx context.Context, p *Problem) {
 	if span := trace.SpanFromContext(ctx); span.IsRecording() {
 		if p.cause != nil {
 			span.RecordError(p.cause)
 		}
-		span.SetStatus(codes.Error, p.Title)
+		// Semconv: 4xx leaves SERVER spans Unset.
+		if p.Status >= http.StatusInternalServerError {
+			span.SetStatus(codes.Error, p.Title)
+		}
 		span.SetAttributes(
 			attribute.String("problem.type", p.Type),
 			attribute.Int("problem.status", p.Status),
@@ -60,25 +86,6 @@ func Write(ctx context.Context, w http.ResponseWriter, p *Problem) {
 		slog.ErrorContext(ctx, p.Title, logAttrs...)
 	} else {
 		slog.WarnContext(ctx, p.Title, logAttrs...)
-	}
-
-	body, err := json.Marshal(p)
-	if err != nil {
-		slog.ErrorContext(ctx, "problem: failed to marshal problem details", "error", err)
-		body = []byte(fallbackBody)
-		p.Status = http.StatusInternalServerError
-	}
-
-	header := w.Header()
-	for k, v := range p.headers {
-		header.Set(k, v)
-	}
-	header.Set("Content-Type", MediaType)
-	header.Set("X-Content-Type-Options", "nosniff")
-	w.WriteHeader(p.Status)
-
-	if _, err := w.Write(body); err != nil {
-		slog.WarnContext(ctx, "problem: failed to write response", "error", err)
 	}
 }
 

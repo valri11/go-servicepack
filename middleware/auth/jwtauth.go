@@ -8,11 +8,19 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"time"
 
-	"github.com/lestrrat-go/jwx/v2/jwk"
-	"github.com/lestrrat-go/jwx/v2/jwt"
+	"github.com/lestrrat-go/httprc/v3"
+	"github.com/lestrrat-go/jwx/v3/jwk"
+	"github.com/lestrrat-go/jwx/v3/jwt"
 
 	"github.com/valri11/go-servicepack/problem"
+)
+
+const (
+	jwksFetchTimeout        = 10 * time.Second
+	jwksInitialFetchTimeout = 30 * time.Second
+	jwksMinRefreshInterval  = 5 * time.Minute
 )
 
 type JwtAuther struct {
@@ -30,7 +38,7 @@ func NewJwtAuther(issuer string,
 
 	ctx := context.Background()
 
-	var set jwk.Set
+	client := &http.Client{Timeout: jwksFetchTimeout}
 	if jwksUrlCert != "" {
 		slog.Debug("jwt auth: updating trust CA")
 		rootCAs, err := x509.SystemCertPool()
@@ -41,22 +49,31 @@ func NewJwtAuther(issuer string,
 			return nil, fmt.Errorf("unable to add cert to trust CA")
 		}
 
-		config := &tls.Config{
+		tr := http.DefaultTransport.(*http.Transport).Clone()
+		tr.TLSClientConfig = &tls.Config{
 			RootCAs: rootCAs,
 		}
-		tr := &http.Transport{TLSClientConfig: config}
-		client := &http.Client{Transport: tr}
+		client.Transport = tr
+	}
 
-		set, err = jwk.Fetch(ctx, jwksUrl, jwk.WithHTTPClient(client))
-		if err != nil {
-			return nil, fmt.Errorf("failed to fetch JWKS with custom CA: %w", err)
-		}
-	} else {
-		var err error
-		set, err = jwk.Fetch(ctx, jwksUrl)
-		if err != nil {
-			return nil, fmt.Errorf("failed to fetch JWKS: %w", err)
-		}
+	cache, err := jwk.NewCache(ctx, httprc.NewClient())
+	if err != nil {
+		return nil, fmt.Errorf("failed to create JWKS cache: %w", err)
+	}
+
+	registerCtx, cancel := context.WithTimeout(ctx, jwksInitialFetchTimeout)
+	defer cancel()
+	err = cache.Register(registerCtx, jwksUrl,
+		jwk.WithHTTPClient(client),
+		jwk.WithMinInterval(jwksMinRefreshInterval),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch JWKS: %w", err)
+	}
+
+	set, err := cache.CachedSet(jwksUrl)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get cached JWKS: %w", err)
 	}
 
 	a := JwtAuther{
@@ -73,8 +90,8 @@ func (a *JwtAuther) AuthVerify(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authToken := getBearerAuthHeader(r.Header.Get("Authorization"))
 		if authToken != "" {
-			slog.Debug("jwt auth: validating bearer token")
-			if token, err := a.validateAuthToken(authToken); err == nil {
+			slog.DebugContext(r.Context(), "jwt auth: validating bearer token")
+			if token, err := a.validateAuthToken(r.Context(), authToken); err == nil {
 				ctx := NewContextWithAuth(r.Context(), token)
 				r = r.WithContext(ctx)
 			} else {
@@ -93,7 +110,7 @@ func (a *JwtAuther) AuthVerify(next http.Handler) http.Handler {
 	})
 }
 
-func (a *JwtAuther) validateAuthToken(authToken string) (jwt.Token, error) {
+func (a *JwtAuther) validateAuthToken(ctx context.Context, authToken string) (jwt.Token, error) {
 	if authToken == "" {
 		return nil, errors.New("empty auth token")
 	}
@@ -101,6 +118,7 @@ func (a *JwtAuther) validateAuthToken(authToken string) (jwt.Token, error) {
 	tokenVer, err := jwt.Parse(
 		[]byte(authToken),
 		jwt.WithValidate(true),
+		jwt.WithContext(ctx),
 		jwt.WithKeySet(a.keySet),
 		jwt.WithIssuer(a.issuer),
 		jwt.WithAudience(a.clientId),
@@ -109,9 +127,11 @@ func (a *JwtAuther) validateAuthToken(authToken string) (jwt.Token, error) {
 		return nil, err
 	}
 
-	slog.Debug("jwt auth: token validated",
-		"issuer", tokenVer.Issuer(),
-		"subject", tokenVer.Subject(),
+	issuer, _ := tokenVer.Issuer()
+	subject, _ := tokenVer.Subject()
+	slog.DebugContext(ctx, "jwt auth: token validated",
+		"issuer", issuer,
+		"subject", subject,
 	)
 
 	return tokenVer, nil
