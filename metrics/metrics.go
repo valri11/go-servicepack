@@ -9,6 +9,7 @@ import (
 	metricsApi "go.opentelemetry.io/otel/metric"
 
 	"github.com/valri11/go-servicepack/problem"
+	"github.com/valri11/go-servicepack/semconv"
 	"github.com/valri11/go-servicepack/telemetry"
 )
 
@@ -17,7 +18,10 @@ type AppMetrics struct {
 }
 
 func NewAppMetrics(meter metricsApi.Meter) (*AppMetrics, error) {
-	errCounter, err := meter.Int64Counter("err_cnt", metricsApi.WithDescription("service error counter"))
+	errCounter, err := meter.Int64Counter(semconv.ServicepackHTTPServerProblemsName,
+		metricsApi.WithDescription(semconv.ServicepackHTTPServerProblemsDescription),
+		metricsApi.WithUnit(semconv.ServicepackHTTPServerProblemsUnit),
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -45,7 +49,7 @@ func WithMetrics(metrics *AppMetrics) func(http.Handler) http.Handler {
 				// Did not go through problem.Write.
 				problemType = "unclassified"
 			}
-			problemAttr := attribute.String("problem.type", problemType)
+			problemAttr := semconv.ProblemType(problemType)
 
 			if labeler, ok := otelhttp.LabelerFromContext(ctx); ok {
 				labeler.Add(problemAttr)

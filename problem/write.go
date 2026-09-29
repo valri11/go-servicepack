@@ -7,9 +7,10 @@ import (
 	"log/slog"
 	"net/http"
 
-	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
+
+	"github.com/valri11/go-servicepack/semconv"
 )
 
 const fallbackBody = `{"type":"about:blank","title":"Internal Server Error","status":500}`
@@ -62,8 +63,8 @@ func observe(ctx context.Context, p *Problem) {
 			span.SetStatus(codes.Error, p.Title)
 		}
 		span.SetAttributes(
-			attribute.String("problem.type", p.Type),
-			attribute.Int("problem.status", p.Status),
+			semconv.ProblemType(p.Type),
+			semconv.ProblemStatus(p.Status),
 		)
 	}
 

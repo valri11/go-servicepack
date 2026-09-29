@@ -11,6 +11,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
 	"github.com/valri11/go-servicepack/problem"
+	"github.com/valri11/go-servicepack/semconv"
 	"github.com/valri11/go-servicepack/telemetry"
 )
 
@@ -48,7 +49,7 @@ func (m testMetrics) collect(t *testing.T) map[string]metricdata.Aggregation {
 
 func errCountPoints(t *testing.T, m testMetrics) []metricdata.DataPoint[int64] {
 	t.Helper()
-	data, ok := m.collect(t)["err_cnt"]
+	data, ok := m.collect(t)[semconv.ServicepackHTTPServerProblemsName]
 	if !ok {
 		return nil
 	}
@@ -72,7 +73,7 @@ func TestWithMetricsLabelsByRouteNotPath(t *testing.T) {
 
 	points := errCountPoints(t, m)
 	if len(points) != 1 {
-		t.Fatalf("err_cnt series = %d, want 1 (raw paths must not become labels)", len(points))
+		t.Fatalf("problems series = %d, want 1 (raw paths must not become labels)", len(points))
 	}
 	p := points[0]
 	if p.Value != 3 {
@@ -100,7 +101,7 @@ func TestWithMetricsUnroutedAndUnknownMethod(t *testing.T) {
 
 	points := errCountPoints(t, m)
 	if len(points) != 1 {
-		t.Fatalf("err_cnt series = %d, want 1", len(points))
+		t.Fatalf("problems series = %d, want 1", len(points))
 	}
 	for key, want := range map[attribute.Key]string{
 		"http.route":          unmatchedRoute,
@@ -122,7 +123,7 @@ func TestWithMetricsSkipsSuccess(t *testing.T) {
 	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
 
 	if points := errCountPoints(t, m); len(points) != 0 {
-		t.Errorf("err_cnt recorded for a 200: %v", points)
+		t.Errorf("problems recorded for a 200: %v", points)
 	}
 }
 

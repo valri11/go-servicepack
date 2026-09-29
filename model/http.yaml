@@ -1,0 +1,75 @@
+file_format: definition/2
+metrics:
+  - name: servicepack.http.server.problems
+    instrument: counter
+    unit: "{problem}"
+    stability: development
+    requirement_level: recommended
+    brief: Number of HTTP server error responses (status 400 and above).
+    attributes:
+      - ref: http.request.method
+        requirement_level: required
+      - ref: http.route
+        requirement_level: required
+        note: "`unmatched` when the request was not routed by a ServeMux pattern."
+      - ref: http.response.status_code
+        requirement_level: required
+      - ref: problem.type
+        requirement_level: required
+
+attribute_groups:
+  # Attributes otelhttp sets whose upstream definitions are not in an importable group.
+  - id: servicepack.http.server.connection
+    visibility: public
+    stability: development
+    brief: Server and client connection attributes on HTTP SERVER spans and metrics.
+    attributes:
+      - ref: server.address
+      - ref: server.port
+      - ref: client.address
+
+span_refinements:
+  - id: servicepack.http.server
+    ref: http.server
+    brief: SERVER span of a request whose error response went through `problem.Write`.
+    attributes:
+      - ref: problem.type
+        requirement_level:
+          conditionally_required: If the response went through `problem.Write`.
+      - ref: problem.status
+        requirement_level:
+          conditionally_required: If the response went through `problem.Write`.
+
+imports:
+  metrics:
+    # otelhttp (telemetry.HTTPMiddleware)
+    - http.server.request.duration
+    - http.server.request.body.size
+    - http.server.response.body.size
+    # contrib runtime instrumentation (telemetry.InitProviders)
+    - go.config.gogc
+    - go.goroutine.count
+    - go.memory.allocated
+    - go.memory.allocations
+    - go.memory.gc.goal
+    - go.memory.limit
+    - go.memory.used
+    - go.processor.limit
+  spans:
+    - span.http.server
+  attribute_groups:
+    # span and metric attributes set by otelhttp, problem.Write and the runtime instrumentation
+    - registry.http
+    - registry.url
+    - registry.network
+    - registry.user_agent
+    - registry.error
+    - registry.exception
+    - registry.go
+    # resource attributes set by telemetry.InitProviders and the Helm chart
+    - registry.service
+    - registry.telemetry
+    - registry.host
+    - registry.os
+    - registry.process
+    - registry.deployment
