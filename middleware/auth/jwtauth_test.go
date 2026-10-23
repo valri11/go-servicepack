@@ -11,6 +11,7 @@ import (
 
 	"github.com/lestrrat-go/jwx/v3/jwa"
 	"github.com/lestrrat-go/jwx/v3/jwk"
+	"github.com/lestrrat-go/jwx/v3/jws"
 	"github.com/lestrrat-go/jwx/v3/jwt"
 )
 
@@ -102,4 +103,94 @@ func TestJwtAutherValidatesAgainstJWKS(t *testing.T) {
 			}
 		})
 	}
+}
+
+// signTyped signs a token for testIssuer/testClientID with the given JOSE
+// "typ" header ("" leaves the jwx default, JWT) and token_type claim.
+func signTyped(t *testing.T, key jwk.Key, typ, tokenType string) string {
+	t.Helper()
+	b := jwt.NewBuilder().
+		Issuer(testIssuer).
+		Audience([]string{testClientID}).
+		Subject("user-1").
+		IssuedAt(time.Now()).
+		Expiration(time.Now().Add(time.Minute))
+	if tokenType != "" {
+		b = b.Claim("token_type", tokenType)
+	}
+	tok, err := b.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var signOpts []jwt.Option
+	if typ != "" && typ != noTyp {
+		hdrs := jws.NewHeaders()
+		if err := hdrs.Set(jws.TypeKey, typ); err != nil {
+			t.Fatal(err)
+		}
+		signOpts = append(signOpts, jws.WithProtectedHeaders(hdrs))
+	}
+	signed, err := jwt.Sign(tok, jwt.WithKey(jwa.RS256(), key, signOpts...))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(signed)
+}
+
+// noTyp asks for a token whose header has no "typ" at all. jwx sets JWT when
+// signing a jwt.Token, so that case is signed as a raw JWS instead.
+const noTyp = "-"
+
+func TestJwtAutherTokenTypeOptions(t *testing.T) {
+	key, jwksURL := newTestJWKS(t)
+
+	tests := []struct {
+		name      string
+		opts      []JwtAutherOption
+		typ       string
+		tokenType string
+		wantOK    bool
+	}{
+		{"default accepts a refresh token", nil, "", "refresh", true},
+		{"default accepts at+jwt", nil, "at+jwt", "", true},
+		{"reject refresh: refresh token refused", []JwtAutherOption{WithRejectRefreshTokens()}, "", "refresh", false},
+		{"reject refresh: access token accepted", []JwtAutherOption{WithRejectRefreshTokens()}, "", "", true},
+		{"require at+jwt: at+jwt accepted", []JwtAutherOption{WithRequireAccessTokenType()}, "at+jwt", "", true},
+		{"require at+jwt: media type form accepted", []JwtAutherOption{WithRequireAccessTokenType()}, "application/AT+JWT", "", true},
+		{"require at+jwt: JWT refused", []JwtAutherOption{WithRequireAccessTokenType()}, "JWT", "", false},
+		{"require at+jwt: missing typ refused", []JwtAutherOption{WithRequireAccessTokenType()}, noTyp, "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a, err := NewJwtAuther(testIssuer, testClientID, jwksURL, "", "", tt.opts...)
+			if err != nil {
+				t.Fatalf("NewJwtAuther: %v", err)
+			}
+			raw := signTyped(t, key, tt.typ, tt.tokenType)
+			if tt.typ == noTyp {
+				raw = signWithoutTyp(t, key)
+			}
+			_, err = a.validateAuthToken(t.Context(), raw)
+			if (err == nil) != tt.wantOK {
+				t.Errorf("validateAuthToken error = %v, want ok=%v", err, tt.wantOK)
+			}
+		})
+	}
+}
+
+// signWithoutTyp signs a valid token whose protected header has no "typ".
+func signWithoutTyp(t *testing.T, key jwk.Key) string {
+	t.Helper()
+	payload := []byte(`{"iss":"` + testIssuer + `","aud":["` + testClientID + `"],"sub":"user-1","exp":` +
+		jsonInt(time.Now().Add(time.Minute).Unix()) + `}`)
+	signed, err := jws.Sign(payload, jws.WithKey(jwa.RS256(), key))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(signed)
+}
+
+func jsonInt(v int64) string {
+	b, _ := json.Marshal(v)
+	return string(b)
 }

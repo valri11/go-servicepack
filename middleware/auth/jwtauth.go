@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/lestrrat-go/httprc/v3"
 	"github.com/lestrrat-go/jwx/v3/jwk"
+	"github.com/lestrrat-go/jwx/v3/jws"
 	"github.com/lestrrat-go/jwx/v3/jwt"
 
 	"github.com/valri11/go-servicepack/problem"
@@ -28,13 +30,41 @@ type JwtAuther struct {
 	clientId string
 	jwksUrl  string
 	keySet   jwk.Set
+
+	rejectRefreshTokens    bool
+	requireAccessTokenType bool
+}
+
+// JwtAutherOption adjusts the checks NewJwtAuther applies on top of
+// signature, iss, aud, exp and nbf.
+type JwtAutherOption func(*JwtAuther)
+
+// WithRejectRefreshTokens refuses a token carrying the claim
+// "token_type": "refresh".
+//
+// identityserver signs refresh tokens with the same key as access tokens.
+// Refresh tokens issued before October 2026 also carry the resource server's
+// audience, so without this check one passes iss, aud and exp and is accepted
+// as an access token for up to 30 days.
+func WithRejectRefreshTokens() JwtAutherOption {
+	return func(a *JwtAuther) { a.rejectRefreshTokens = true }
+}
+
+// WithRequireAccessTokenType refuses a token whose JOSE "typ" header is not
+// "at+jwt" (RFC 9068 §4), which rejects ID tokens and refresh tokens as well
+// as access tokens from issuers that do not set it. Turn it on only once
+// every issuer the service trusts signs access tokens with at+jwt, and after
+// the tokens issued before that have expired.
+func WithRequireAccessTokenType() JwtAutherOption {
+	return func(a *JwtAuther) { a.requireAccessTokenType = true }
 }
 
 func NewJwtAuther(issuer string,
 	clientId string,
 	jwksUrl string,
 	jwksUrlCert string,
-	signVerifyKeyPem string) (*JwtAuther, error) {
+	signVerifyKeyPem string,
+	opts ...JwtAutherOption) (*JwtAuther, error) {
 
 	ctx := context.Background()
 
@@ -82,6 +112,11 @@ func NewJwtAuther(issuer string,
 		jwksUrl:  jwksUrl,
 		keySet:   set,
 	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&a)
+		}
+	}
 
 	return &a, nil
 }
@@ -127,6 +162,20 @@ func (a *JwtAuther) validateAuthToken(ctx context.Context, authToken string) (jw
 		return nil, err
 	}
 
+	// Both checks run after jwt.Parse has verified the signature, so the
+	// header and claims they read are the issuer's.
+	if a.rejectRefreshTokens {
+		var tokenType string
+		if err := tokenVer.Get("token_type", &tokenType); err == nil && tokenType == "refresh" {
+			return nil, errors.New("refresh token presented as an access token")
+		}
+	}
+	if a.requireAccessTokenType {
+		if err := checkAccessTokenType(authToken); err != nil {
+			return nil, err
+		}
+	}
+
 	issuer, _ := tokenVer.Issuer()
 	subject, _ := tokenVer.Subject()
 	slog.DebugContext(ctx, "jwt auth: token validated",
@@ -135,4 +184,23 @@ func (a *JwtAuther) validateAuthToken(ctx context.Context, authToken string) (jw
 	)
 
 	return tokenVer, nil
+}
+
+// checkAccessTokenType requires the JOSE "typ" header to be at+jwt. RFC 9068
+// §4 allows the media-type form too, and media types are case-insensitive.
+func checkAccessTokenType(compact string) error {
+	msg, err := jws.Parse([]byte(compact))
+	if err != nil {
+		return fmt.Errorf("reading token header: %w", err)
+	}
+	sigs := msg.Signatures()
+	if len(sigs) == 0 {
+		return errors.New("token has no signature")
+	}
+	typ, _ := sigs[0].ProtectedHeaders().Type()
+	switch strings.ToLower(typ) {
+	case "at+jwt", "application/at+jwt":
+		return nil
+	}
+	return fmt.Errorf("token typ %q is not at+jwt", typ)
 }
