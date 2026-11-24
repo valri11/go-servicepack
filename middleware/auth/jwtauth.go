@@ -132,10 +132,12 @@ func (a *JwtAuther) AuthVerify(next http.Handler) http.Handler {
 			} else {
 				// Validation errors name keys, issuers and clock skew, so they
 				// stay in the log as the cause.
+				reason := tokenFailureReason(err)
 				problem.Write(r.Context(), w,
-					problem.Unauthorized("The provided bearer token is not valid.").
+					problem.Unauthorized("The provided bearer token is not valid: "+reason+".").
 						WithType(problem.TypeInvalidToken).
 						WithInstance(r.URL.Path).
+						WithHeader("WWW-Authenticate", bearerChallenge("invalid_token", reason)).
 						WithCause(err))
 				return
 			}
@@ -167,7 +169,7 @@ func (a *JwtAuther) validateAuthToken(ctx context.Context, authToken string) (jw
 	if a.rejectRefreshTokens {
 		var tokenType string
 		if err := tokenVer.Get("token_type", &tokenType); err == nil && tokenType == "refresh" {
-			return nil, errors.New("refresh token presented as an access token")
+			return nil, errRefreshToken
 		}
 	}
 	if a.requireAccessTokenType {
@@ -202,5 +204,5 @@ func checkAccessTokenType(compact string) error {
 	case "at+jwt", "application/at+jwt":
 		return nil
 	}
-	return fmt.Errorf("token typ %q is not at+jwt", typ)
+	return fmt.Errorf("%w: got %q", errTokenType, typ)
 }
